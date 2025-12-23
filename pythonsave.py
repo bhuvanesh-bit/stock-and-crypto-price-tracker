@@ -205,9 +205,20 @@ def dashboard():
     st.title("📊 Crypto & Stock Tracker")
     create_tables()
 
-    # -------------------------
-    # PORTFOLIO
-    # -------------------------
+    # -------- Market Data --------
+    choice = st.selectbox("Choose Type", ["Stock", "Crypto"])
+    symbol = st.text_input("Symbol", "BTC" if choice == "Crypto" else "AAPL")
+
+    if st.button("Fetch Data"):
+        df = get_stock_data(symbol) if choice == "Stock" else get_crypto_history(symbol.lower())
+        df = add_all_indicators(df)
+
+        if not df.empty:
+            st.line_chart(df.set_index("Date")["Close"])
+            st.dataframe(df.tail(10))
+
+    # -------- Portfolio --------
+    st.write("---")
     st.subheader("📦 Portfolio")
 
     with st.form("portfolio_form"):
@@ -219,12 +230,10 @@ def dashboard():
     if submit:
         if asset and qty > 0 and price > 0:
             if add_to_portfolio(asset, qty, price):
-                st.success("Asset added successfully")
+                st.success("Asset added to portfolio")
                 st.rerun()
-            else:
-                st.error("Failed to add asset")
         else:
-            st.warning("Please fill all fields correctly")
+            st.warning("Fill all fields correctly")
 
     st.dataframe(get_portfolio())
 
