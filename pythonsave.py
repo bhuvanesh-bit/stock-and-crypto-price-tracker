@@ -9,7 +9,7 @@ import smtplib
 from email.mime.text import MIMEText
 
 DB = "tracker.db"
-EMAIL_USER = os.getenv("EMAIL_USER")
+EMAIL_USER = os.getenv("EMAIL_USER")  # optional
 EMAIL_PASS = os.getenv("EMAIL_PASS")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -109,9 +109,12 @@ def add_bollinger(df):
 def add_all_indicators(df):
     if df.empty:
         return df
+
+    df = df.copy()
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="ignore")
         df = df.sort_values("Date")
+
     df = add_moving_averages(df)
     df = compute_RSI(df)
     df = add_bollinger(df)
@@ -122,9 +125,9 @@ def add_all_indicators(df):
 # ---------------------------------------------------------
 def create_tables():
     with safe_connect(DB) as con:
-        con.execute(
-            "CREATE TABLE IF NOT EXISTS portfolio (id INTEGER PRIMARY KEY, asset TEXT, quantity REAL, buy_price REAL)"
-        )
+        con.execute("CREATE TABLE IF NOT EXISTS prices(id INTEGER PRIMARY KEY, asset TEXT, price REAL, timestamp TEXT)")
+        con.execute("CREATE TABLE IF NOT EXISTS portfolio(id INTEGER PRIMARY KEY, asset TEXT, quantity REAL, buy_price REAL)")
+        con.execute("CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY, asset TEXT, threshold REAL, method TEXT)")
         con.commit()
 
 def get_portfolio():
@@ -134,23 +137,12 @@ def get_portfolio():
     except:
         return pd.DataFrame()
 
-def add_to_portfolio(asset, quantity, buy_price):
-    try:
-        with safe_connect(DB) as con:
-            con.execute(
-                "INSERT INTO portfolio (asset, quantity, buy_price) VALUES (?, ?, ?)",
-                (asset.upper(), quantity, buy_price),
-            )
-            con.commit()
-        return True
-    except:
-        return False
-
 # ---------------------------------------------------------
-# AUTH
+# AUTH: SIGNUP + LOGIN
 # ---------------------------------------------------------
 def signup_page():
     st.title("📝 Create Account")
+
     u = st.text_input("New Username")
     p = st.text_input("New Password", type="password")
     cp = st.text_input("Confirm Password", type="password")
@@ -173,6 +165,7 @@ def login_page():
         return
 
     st.title("🔐 Login")
+
     USER = st.session_state.get("APP_USER", "admin")
     PASS = st.session_state.get("APP_PASS", "admin")
 
@@ -193,6 +186,65 @@ def login_page():
     st.stop()
 
 # ---------------------------------------------------------
+# COINGECKO ID MAP
+# ---------------------------------------------------------
+def coin_symbol_to_id(symbol):
+    mapping = {
+        "BTC": "bitcoin",
+        "ETH": "ethereum",
+        "LTC": "litecoin",
+        "DOGE": "dogecoin",
+        "SOL": "solana",
+        "BNB": "binancecoin",
+        "ADA": "cardano",
+    }
+    symbol = symbol.strip().upper()
+    return mapping.get(symbol, symbol.lower())
+
+# ---------------------------------------------------------
+# ALERT MODULE
+# ---------------------------------------------------------
+def send_email_alert(to, subject, message):
+    if not EMAIL_USER or not EMAIL_PASS:
+        return False
+    try:
+        msg = MIMEText(message)
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_USER
+        msg["To"] = to
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+            s.login(EMAIL_USER, EMAIL_PASS)
+            s.sendmail(EMAIL_USER, to, msg.as_string())
+        return True
+    except:
+        return False
+
+def send_telegram_alert(bot_token, chat_id, message):
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        requests.post(url, data={"chat_id": chat_id, "text": message})
+        return True
+    except:
+        return False
+
+def check_alert(asset, current_price, threshold, methods):
+    """methods = {'email': send_email_alert, 'telegram': send_telegram_alert}"""
+    if current_price >= threshold:
+        msg = f"🚨 {asset} crossed {threshold}! Current: {current_price}"
+
+        results = {}
+        for name, func in methods.items():
+            if name == "email":
+                results["email"] = func(EMAIL_USER, f"{asset} Alert", msg)
+            elif name == "telegram":
+                results["telegram"] = func(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
+
+        return results
+
+    return False
+
+# ---------------------------------------------------------
 # DASHBOARD
 # ---------------------------------------------------------
 def dashboard():
@@ -203,38 +255,68 @@ def dashboard():
         st.rerun()
 
     st.title("📊 Crypto & Stock Tracker")
+
     create_tables()
 
-    # -------- Market Data --------
     choice = st.selectbox("Choose Type", ["Stock", "Crypto"])
     symbol = st.text_input("Symbol", "BTC" if choice == "Crypto" else "AAPL")
 
     if st.button("Fetch Data"):
-        df = get_stock_data(symbol) if choice == "Stock" else get_crypto_history(symbol.lower())
+        if choice == "Stock":
+            df = get_stock_data(symbol)
+        else:
+            df = get_crypto_history(coin_symbol_to_id(symbol))
+
         df = add_all_indicators(df)
 
         if not df.empty:
             st.line_chart(df.set_index("Date")["Close"])
             st.dataframe(df.tail(10))
 
-    # -------- Portfolio --------
+    # -------------------------
+    # ALERT UI
+    # -------------------------
+    st.write("---")
+    st.subheader("⏰ Price Alerts")
+
+    a = st.text_input("Alert Asset")
+    t = st.number_input("Threshold Price", value=0.0)
+    use_email = st.checkbox("fun.knowledge7@gmail.com")
+    use_tg = st.checkbox("Telegram Alert")
+
+    if st.button("Check Alert Now"):
+        current = None
+
+        if a.isalpha() and len(a) <= 5:
+            df = get_stock_data(a)
+            current = float(df["Close"].iloc[-1]) if not df.empty else None
+            name = a.upper()
+        else:
+            cid = coin_symbol_to_id(a)
+            current = get_crypto_price(cid)
+            name = cid
+
+        if current is None:
+            st.error("Price fetch failed")
+        else:
+            methods = {}
+            if use_email:
+                methods["email"] = send_email_alert
+            if use_tg:
+                methods["telegram"] = send_telegram_alert
+
+            res = check_alert(name, current, t, methods)
+
+            if res:
+                st.success(f"Alert Triggered → {res}")
+            else:
+                st.info(f"No Alert. Price {current} < {t}")
+
+    # -------------------------
+    # PORTFOLIO
+    # -------------------------
     st.write("---")
     st.subheader("📦 Portfolio")
-
-    with st.form("portfolio_form"):
-        asset = st.text_input("Asset (BTC / AAPL)")
-        qty = st.number_input("Quantity", min_value=0.0, step=0.01)
-        price = st.number_input("Buy Price", min_value=0.0, step=0.01)
-        submit = st.form_submit_button("Add to Portfolio")
-
-    if submit:
-        if asset and qty > 0 and price > 0:
-            if add_to_portfolio(asset, qty, price):
-                st.success("Asset added to portfolio")
-                st.rerun()
-        else:
-            st.warning("Fill all fields correctly")
-
     st.dataframe(get_portfolio())
 
 # ---------------------------------------------------------
