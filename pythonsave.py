@@ -137,6 +137,20 @@ def get_portfolio():
     except:
         return pd.DataFrame()
 
+def add_to_portfolio(asset, quantity, buy_price):
+    try:
+        with safe_connect(DB) as con:
+            con.execute(
+                "INSERT INTO portfolio (asset, quantity, buy_price) VALUES (?, ?, ?)",
+                (asset.upper(), quantity, buy_price)
+            )
+            con.commit()
+        return True
+    except Exception as e:
+        st.error(f"DB Error: {e}")
+        return False
+
+
 # ---------------------------------------------------------
 # AUTH: SIGNUP + LOGIN
 # ---------------------------------------------------------
@@ -354,5 +368,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
