@@ -315,9 +315,28 @@ def dashboard():
     # -------------------------
     # PORTFOLIO
     # -------------------------
+                                
     st.write("---")
     st.subheader("📦 Portfolio")
+
+    with st.form("portfolio_form"):
+        p_asset = st.text_input("Asset (BTC / AAPL)")
+        p_qty = st.number_input("Quantity", min_value=0.0, step=0.01)
+        p_price = st.number_input("Buy Price", min_value=0.0, step=0.01)
+        add_btn = st.form_submit_button("Add to Portfolio")
+
+    if add_btn:
+        if p_asset and p_qty > 0 and p_price > 0:
+            success = add_to_portfolio(p_asset, p_qty, p_price)
+            if success:
+                st.success("Asset added to portfolio")
+                st.rerun()
+            else:
+                st.warning("Please fill all fields correctly")
+
     st.dataframe(get_portfolio())
+
+    
 
 # ---------------------------------------------------------
 # MAIN
@@ -335,4 +354,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
